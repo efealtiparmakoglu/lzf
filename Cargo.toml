@@ -1,0 +1,13 @@
+[package]
+name = "lzf"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.70"
+description = "Fast zero-dependency LZ77 + canonical Huffman file compressor with its own container format (LZF1)"
+license = "MIT"
+keywords = ["compression", "lz77", "huffman", "cli", "archive"]
+categories = ["command-line-utilities", "compression"]
+
+[profile.release]
+lto = true
+codegen-units = 1

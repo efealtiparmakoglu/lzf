@@ -2,7 +2,7 @@
 //! boundaries, every compression level, corruption handling and the CLI.
 
 use std::fs;
-use std::process::ExitCode;
+use std::process::Command;
 
 use lzf::compress::compress_bytes;
 use lzf::decompress::decompress_bytes;
@@ -26,6 +26,17 @@ impl Rng {
     fn byte(&mut self) -> u8 {
         (self.next_u64() >> 24) as u8
     }
+}
+
+// ExitCode did not implement PartialEq on the declared Rust 1.70 minimum.
+// Invoke the real binary and inspect its numeric process status instead.
+fn cli_code(args: &[String]) -> i32 {
+    let output = Command::new(env!("CARGO_BIN_EXE_lzf"))
+        .args(args)
+        .output()
+        .unwrap();
+    eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+    output.status.code().expect("CLI terminated without an exit code")
 }
 
 fn roundtrip(data: &[u8], level: u8, label: &str) {
@@ -176,7 +187,7 @@ fn cli_end_to_end() {
         .iter()
         .map(|s| s.to_string())
         .collect();
-    assert_eq!(lzf::run(&args), ExitCode::SUCCESS);
+    assert_eq!(cli_code(&args), 0);
     let packed_path = dir.join("doc.txt.lzf");
     let packed = fs::read(&packed_path).unwrap();
     assert!(packed.starts_with(b"LZF1"));
@@ -186,7 +197,7 @@ fn cli_end_to_end() {
         .iter()
         .map(|s| s.to_string())
         .collect();
-    assert_eq!(lzf::run(&args), ExitCode::SUCCESS);
+    assert_eq!(cli_code(&args), 0);
 
     // decompress and compare
     let restored = dir.join("doc.out.txt");
@@ -200,18 +211,18 @@ fn cli_end_to_end() {
     .iter()
     .map(|s| s.to_string())
     .collect();
-    assert_eq!(lzf::run(&args), ExitCode::SUCCESS);
+    assert_eq!(cli_code(&args), 0);
     assert_eq!(fs::read(&restored).unwrap(), content);
 
     // compressing again without -f must fail (output exists)
     let args: Vec<String> = ["c", orig.to_str().unwrap()].iter().map(|s| s.to_string()).collect();
-    assert_eq!(lzf::run(&args), ExitCode::FAILURE);
+    assert_eq!(cli_code(&args), 1);
 
     // garbage input to `test` must fail cleanly
     let junk = dir.join("junk.lzf");
     fs::write(&junk, b"NOT LZF AT ALL NOT LZF").unwrap();
     let args: Vec<String> = ["t", junk.to_str().unwrap()].iter().map(|s| s.to_string()).collect();
-    assert_eq!(lzf::run(&args), ExitCode::FAILURE);
+    assert_eq!(cli_code(&args), 1);
 
     let _ = fs::remove_dir_all(&dir);
 }

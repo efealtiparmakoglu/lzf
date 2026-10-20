@@ -16,6 +16,7 @@ pub mod error;
 pub mod format;
 pub mod huffman;
 pub mod matchfind;
+mod output;
 pub mod tables;
 
 use std::fs;
@@ -90,49 +91,40 @@ fn compress_one(
         Some(p) => p.to_path_buf(),
         None => PathBuf::from(format!("{}.lzf", input.display())),
     };
-    if out_path.exists() && !force {
-        return Err(Error::Exists(out_path.display().to_string()));
-    }
     let name = input
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
 
     let f = fs::File::open(input)?;
-    let out_file = fs::File::create(&out_path)?;
+    let (pending, out_file) = output::PendingOutput::create(input, &out_path, force)?;
     let start = Instant::now();
-    let result = compress::compress_stream(
+    let (in_size, stats, mut writer) = compress::compress_stream(
         BufReader::with_capacity(1 << 20, f),
         BufWriter::with_capacity(1 << 20, out_file),
         level,
         name.as_bytes(),
-    );
-    match result {
-        Ok((in_size, stats, _writer)) => {
-            let dur = start.elapsed();
-            if rm {
-                let _ = fs::remove_file(input);
-            }
-            if !quiet {
-                println!(
-                    "{}: {} -> {} ({:.1}% saved) in {} [{:.1} MiB/s, level {}]",
-                    out_path.display(),
-                    human(in_size),
-                    human(stats.output_size),
-                    saved_pct(in_size, stats.output_size),
-                    human_duration(dur),
-                    mib_per_s(in_size, dur),
-                    level,
-                );
-            }
-            Ok(())
-        }
-        Err(e) => {
-            // Don't leave a half-written container behind.
-            let _ = fs::remove_file(&out_path);
-            Err(e)
-        }
+    )?;
+    writer.flush()?;
+    drop(writer);
+    pending.commit(force)?;
+    let dur = start.elapsed();
+    if rm {
+        fs::remove_file(input)?;
     }
+    if !quiet {
+        println!(
+            "{}: {} -> {} ({:.1}% saved) in {} [{:.1} MiB/s, level {}]",
+            out_path.display(),
+            human(in_size),
+            human(stats.output_size),
+            saved_pct(in_size, stats.output_size),
+            human_duration(dur),
+            mib_per_s(in_size, dur),
+            level,
+        );
+    }
+    Ok(())
 }
 
 fn decompress_one(
@@ -156,43 +148,34 @@ fn decompress_one(
             }
         }
     };
-    if out_path.exists() && !force {
-        return Err(Error::Exists(out_path.display().to_string()));
-    }
 
     let f = fs::File::open(input)?;
-    let out_file = fs::File::create(&out_path)?;
+    let (pending, out_file) = output::PendingOutput::create(input, &out_path, force)?;
     let mut out_writer = BufWriter::with_capacity(1 << 20, out_file);
     let start = Instant::now();
-    let result = decompress::decompress_stream(
+    let (header, written, _) = decompress::decompress_stream(
         BufReader::with_capacity(1 << 20, f),
         &mut out_writer,
-    );
-    match result {
-        Ok((header, written, _)) => {
-            out_writer.flush()?;
-            let dur = start.elapsed();
-            if rm {
-                let _ = fs::remove_file(input);
-            }
-            if !quiet {
-                println!(
-                    "{} -> {}: {} in {} [{:.1} MiB/s, crc32 ok, stored as \"{}\"]",
-                    input.display(),
-                    out_path.display(),
-                    human(written),
-                    human_duration(dur),
-                    mib_per_s(written, dur),
-                    header.name,
-                );
-            }
-            Ok(())
-        }
-        Err(e) => {
-            let _ = fs::remove_file(&out_path);
-            Err(e)
-        }
+    )?;
+    out_writer.flush()?;
+    drop(out_writer);
+    pending.commit(force)?;
+    let dur = start.elapsed();
+    if rm {
+        fs::remove_file(input)?;
     }
+    if !quiet {
+        println!(
+            "{} -> {}: {} in {} [{:.1} MiB/s, crc32 ok, stored as \"{}\"]",
+            input.display(),
+            out_path.display(),
+            human(written),
+            human_duration(dur),
+            mib_per_s(written, dur),
+            header.name,
+        );
+    }
+    Ok(())
 }
 
 fn test_one(input: &Path) -> Result<()> {

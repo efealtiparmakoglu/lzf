@@ -22,7 +22,7 @@ enwik-txt.lzf -> enwik-txt: 100.0 MiB in 0.91 s [109.5 MiB/s, crc32 ok, stored a
 
 - **Zero dependencies** — the entire codec (bit I/O, Huffman construction
   with a 15-bit limiter, hash-chain match finder, CRC-32) is hand-written on
-  top of `std`. `Cargo.toml` has an empty `[dependencies]` section.
+  top of `std`. `Cargo.toml` declares no dependencies.
 - **Self-contained blocks** — every 1 MiB block carries its own Huffman
   tables and resets its own 64 KiB window. Corruption cannot cascade across
   blocks, and the design leaves the door open to parallel decode.
@@ -37,10 +37,12 @@ enwik-txt.lzf -> enwik-txt: 100.0 MiB in 0.91 s [109.5 MiB/s, crc32 ok, stored a
 ## Install
 
 ```sh
-cargo install --path .
+git clone https://github.com/efealtiparmakoglu/lzf.git
+cd lzf
+cargo install --path . --locked
 ```
 
-Requires Rust 1.70+. No other dependencies, build steps, or network access.
+Requires Rust 1.70+ and Cargo. Once the source and Rust toolchain are available, the zero-dependency build can run offline: `cargo install --path . --locked --offline`.
 
 ## Usage
 
@@ -70,6 +72,25 @@ lzf t important.lzf          # integrity check only
 
 Exit codes: `0` success, `1` runtime failure (I/O, corrupt input, existing
 output), `2` usage error.
+
+## Output safety
+
+Compression and decompression write to a temporary file beside the destination.
+The destination is published only after the stream completes successfully;
+decompression also verifies the size and CRC before replacing an existing file.
+`--force` never permits the same input/output path (including symbolic aliases;
+hard-link aliases are also rejected on Unix). `--rm` runs only after publication,
+and a removal failure is reported instead of silently ignored.
+
+Without `--force`, publication uses a hard link so a file created by another
+process during compression is preserved. The destination filesystem must support
+hard links; unsupported filesystems fail safely. With `--force`, the destination
+entry is replaced by rename (a destination symlink is replaced, not followed).
+Temporary output is cleaned up on normal errors. This is not a backup system or
+a power-loss durability guarantee; keep backups of important files.
+
+**TR:** İşlem ve CRC kontrolü bitmeden mevcut hedef dosya değiştirilmez. Giriş ve
+çıkış aynı dosya olamaz; `--rm` yalnızca başarılı çıktı oluşturulduktan sonra çalışır.
 
 ## The format in one page
 
@@ -117,6 +138,12 @@ Decompression runs at ~270–300 MiB/s regardless of level and is CRC-verified
 end to end. Round-trips are byte-identical.
 
 ## Development
+
+CI runs release tests on Linux, macOS and Windows, plus the declared minimum
+Rust 1.70 on Linux. Stable Linux also runs Clippy with warnings denied.
+File-safety regressions exercise the real CLI, failed CRCs, aliases, failed
+publication, concurrent destination creation, and successful `--rm` round trips.
+
 
 ```sh
 cargo test            # unit + integration suites

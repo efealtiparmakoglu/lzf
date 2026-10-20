@@ -3,16 +3,38 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   test:
+    timeout-minutes: 15
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            toolchain: stable
+          - os: macos-latest
+            toolchain: stable
+          - os: windows-latest
+            toolchain: stable
+          - os: ubuntu-latest
+            toolchain: '1.70.0'
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust toolchain
+        run: rustup toolchain install ${{ matrix.toolchain }} --profile minimal --no-self-update
       - name: Build (release)
-        run: cargo build --release
-      - name: Unit + integration tests
-        run: cargo test --release
+        run: cargo +${{ matrix.toolchain }} build --release --locked
+      - name: Unit and real CLI integration tests
+        run: cargo +${{ matrix.toolchain }} test --release --locked
+      - name: Install Clippy
+        if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
+        run: rustup component add clippy --toolchain stable
+      - name: Clippy
+        if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
+        run: cargo +stable clippy --locked --all-targets -- -D warnings
